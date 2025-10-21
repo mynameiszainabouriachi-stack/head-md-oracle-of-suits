@@ -1,2 +1,1 @@
-# Oracle of suits 
-this 
+# Oracle of Suits
