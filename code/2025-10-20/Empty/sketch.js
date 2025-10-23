@@ -3,6 +3,8 @@ let y;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  x = width * 0.5;
+  y = height * 0.5;
 }
 
 function windowResized() {
@@ -11,8 +13,9 @@ function windowResized() {
 
 function draw() {
   background(220);
+  y += random(-1, 1);
+  y += random(-1, 1);
   circle(x, y, 50);
-  print(x);
 }
 
 function mousePressed() {
