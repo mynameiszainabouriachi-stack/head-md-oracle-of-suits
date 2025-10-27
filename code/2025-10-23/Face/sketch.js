@@ -174,11 +174,6 @@ function draw() {
   // draw video on top of the background so camera image remains visible
   if (isVideoReady()) image(videoElement, vx, vy);
 
-  // debug text
-  fill(255);
-  textSize(18);
-  text('Left Eye Blink: ' + nf(leftEyeBlink, 1, 2), 10, height - 60);
-
   // --- new: face detection to move dog horizontally ---
   let faces = getFaceLandmarks();
   if (faces && faces.length > 0) {
