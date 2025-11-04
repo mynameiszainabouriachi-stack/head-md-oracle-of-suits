@@ -15,10 +15,16 @@ function windowResized() {
 }
 
 
-// new globals for fist detection / effect
+// new globals for fist detection / effect (updated to use palm center 9)
 let fistActive = false;
-let lastPalm = null; // {x,y} in video coords for effect placement
-const FIST_THRESHOLD = 0.25; // normalized threshold (experiment to tune)
+let lastPalm = null; // {x,y} in normalized video coords for effect placement
+
+// smoothing / hysteresis parameters (for stable, real-time feedback)
+let fistConfidence = 0;            // 0..1 smoothed confidence that hand is closed
+const FIST_SMOOTH = 0.18;          // EMA smoothing factor (0..1)
+const PALM_THRESHOLD = 0.05;       // normalized distance threshold between landmark 12 and 9
+const HYSTERESIS = 0.01;           // small hysteresis to avoid flicker
+const CONFIDENCE_THRESHOLD = 0.6;  // when smoothed confidence exceeds this -> consider closed
 
 // small helper: Euclidean distance between two normalized landmarks
 function distNorm(a, b) {
@@ -27,68 +33,96 @@ function distNorm(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// returns true if hand landmarks indicate a closed fist
+// returns true if hand landmarks indicate a closed hand based on distance between
+// landmark 12 (middle fingertip) and landmark 9 (palm center).
+// Uses smoothing + hysteresis to avoid flicker and to keep feedback responsive.
 function isFist(landmarks) {
-  // choose palm center: prefer 9 (center of palm), fallback to 0 (wrist)
-  const palmIndex = (landmarks[9]) ? 9 : 0;
-  const palm = landmarks[palmIndex];
+  if (!landmarks) return false;
+  const tip12 = landmarks[12];
+  const palm9 = landmarks[9];
+  if (!tip12 || !palm9) return false;
 
-  // choose a reference length to normalize for hand size
-  // use distance between wrist (0) and middle finger MCP (9) if available
-  let refLen = 0.0;
-  if (landmarks[0] && landmarks[9]) {
-    refLen = distNorm(landmarks[0], landmarks[9]);
+  // distances in normalized coordinates
+  const d12_9 = distNorm(tip12, palm9);
+
+  // keep a reference point for effects at the palm center
+  lastPalm = { x: palm9.x, y: palm9.y };
+
+  // compute a crisp closed/open decision with hysteresis
+  // closed when distance <= PALM_THRESHOLD - HYSTERESIS
+  // open when distance >= PALM_THRESHOLD + HYSTERESIS
+  const closedHard = d12_9 <= (PALM_THRESHOLD - HYSTERESIS);
+  const openHard = d12_9 >= (PALM_THRESHOLD + HYSTERESIS);
+
+  // target confidence: 1 = closed, 0 = open, smooth in-between
+  let target = 0;
+  if (closedHard) {
+    target = 1;
+  } else if (openHard) {
+    target = 0;
   } else {
-    // fallback: distance between wrist and index MCP (5) or a small epsilon
-    if (landmarks[5]) refLen = distNorm(landmarks[0], landmarks[5]);
-    if (refLen === 0) refLen = 0.0001;
+    // interpolate softly when in the hysteresis band
+    const t = (PALM_THRESHOLD + HYSTERESIS - d12_9) / (2 * HYSTERESIS || 1);
+    target = constrain(t, 0, 1);
   }
 
-  // fingertip indices to check (exclude thumb 4, as requested)
-  const tips = [8, 12, 16, 20];
+  // exponential smoothing of confidence
+  fistConfidence = fistConfidence + (target - fistConfidence) * FIST_SMOOTH;
 
-  // compute average normalized distance of tips to palm
-  let sum = 0;
-  let count = 0;
-  for (let ti of tips) {
-    const tip = landmarks[ti];
-    if (!tip) continue;
-    sum += distNorm(tip, palm);
-    count++;
-  }
-  if (count === 0) return false;
-  const avg = sum / count;
-
-  // update lastPalm for effect (convert to video coords later)
-  lastPalm = { x: palm.x, y: palm.y };
-
-  // if average distance is small relative to refLen -> fist
-  return avg <= (FIST_THRESHOLD * refLen);
+  return fistConfidence >= CONFIDENCE_THRESHOLD;
 }
 
 function onFistStart() {
   // activate effect / action
   console.log("Fist detected: activating effect");
-  // ...place other activation code here (sound, state, etc.)...
+  // additional activation code can go here
 }
 
 function onFistEnd() {
   // deactivate effect / action
   console.log("Hand opened: deactivating effect");
-  // ...place other deactivation code here...
+  // additional deactivation code can go here
 }
 
 function drawEffect() {
   if (!lastPalm) return;
-  // convert normalized palm coords to video pixels
-  const px = lastPalm.x * videoElement.width;
-  const py = lastPalm.y * videoElement.height;
-  // draw a translucent pulsing circle at the palm
+
+  // use fistConfidence to control intensity/pulse
+  const intensity = fistConfidence; // 0..1
+
+  // translucent overlay whose alpha depends on confidence
   push();
   noStroke();
-  fill(255, 200, 0, 140);
-  const r = min(videoElement.width, videoElement.height) * 0.12;
+  fill(10, 120, 200, 60 * intensity + 10); // tint the whole screen slightly
+  rect(0, 0, width, height);
+  pop();
+
+  // convert normalized tip coords to video pixels (consistent with the rest of the code)
+  const px = lastPalm.x * videoElement.width;
+  const py = lastPalm.y * videoElement.height;
+
+  // pulsing radius
+  const baseR = Math.min(videoElement.width, videoElement.height) * 0.06;
+  const pulse = 1 + Math.sin(frameCount * 0.15) * 0.12;
+  const r = baseR * (1 + intensity * 0.6) * pulse;
+
+  // glowing circle
+  push();
+  noStroke();
+  // outer glow
+  fill(255, 50, 50, 30 * intensity + 10);
+  ellipse(px, py, r * 3, r * 3);
+  // main circle
+  fill(255, 80, 80, 220 * intensity + 35);
   ellipse(px, py, r, r);
+  pop();
+
+  // label with confidence percent
+  push();
+  fill(255);
+  textAlign(CENTER, BOTTOM);
+  textSize(20 + 12 * intensity);
+  text(`closed fist detected`, px, py - r - 8);
   pop();
 }
 
