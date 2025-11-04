@@ -26,6 +26,17 @@ const PALM_THRESHOLD = 0.05;       // normalized distance threshold between land
 const HYSTERESIS = 0.01;           // small hysteresis to avoid flicker
 const CONFIDENCE_THRESHOLD = 0.6;  // when smoothed confidence exceeds this -> consider closed
 
+// Tap (knock) detection globals
+let tapMeanDist = 0;                // smoothed mean finger-to-middle distance
+const TAP_SMOOTH = 0.22;            // smoothing for distance
+const TAP_CLOSE_THRESHOLD = 0.048;  // distance considered "closed"
+const TAP_OPEN_THRESHOLD = 0.066;   // distance considered "open" (hysteresis)
+const TAP_MAX_INTERVAL = 850;       // ms max time between close and open to count as a tap
+let pendingClose = false;           // true after we detect a "close" waiting for an "open"
+let lastCloseTime = 0;              // millis() when close detected
+let lastTapTime = 0;                // millis() of last registered tap
+let tapEffects = [];                // active visual tap effects
+
 // small helper: Euclidean distance between two normalized landmarks
 function distNorm(a, b) {
   const dx = a.x - b.x;
@@ -33,9 +44,125 @@ function distNorm(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// returns true if hand landmarks indicate a closed hand based on distance between
-// landmark 12 (middle fingertip) and landmark 9 (palm center).
-// Uses smoothing + hysteresis to avoid flicker and to keep feedback responsive.
+// register a tap — create a visual effect at the palm center
+function registerTap(palmNorm) {
+  const now = millis();
+  lastTapTime = now;
+  // store effect with creation time and normalized coords
+  tapEffects.push({
+    x: palmNorm.x,
+    y: palmNorm.y,
+    t: now
+  });
+  console.log("Tap registered at", now);
+}
+
+// process a single hand for taps: returns true if a tap was registered this frame
+function processTap(landmarks) {
+  if (!landmarks) return false;
+
+  // compute mean distance from each fingertip to its corresponding "middle" joint:
+  // tips [8,12,16,20] -> middles [5,9,13,17]
+  const tipIdx = [8, 12, 16, 20];
+  const midIdx = [5, 9, 13, 17];
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < tipIdx.length; i++) {
+    const tip = landmarks[tipIdx[i]];
+    const mid = landmarks[midIdx[i]];
+    if (!tip || !mid) continue;
+    sum += distNorm(tip, mid);
+    count++;
+  }
+  if (count === 0) return false;
+  const meanDist = sum / count;
+
+  // update a palm center reference (average of 5,9,13,17)
+  let px = 0, py = 0, pc = 0;
+  for (let idx of midIdx) {
+    const m = landmarks[idx];
+    if (!m) continue;
+    px += m.x; py += m.y; pc++;
+  }
+  if (pc > 0) lastPalm = { x: px / pc, y: py / pc };
+
+  // smooth the mean distance to reduce jitter
+  tapMeanDist = tapMeanDist + (meanDist - tapMeanDist) * TAP_SMOOTH;
+
+  const now = millis();
+
+  // timeout pending close if it takes too long
+  if (pendingClose && now - lastCloseTime > TAP_MAX_INTERVAL) {
+    pendingClose = false;
+  }
+
+  // detect close -> open pattern with hysteresis
+  if (tapMeanDist <= TAP_CLOSE_THRESHOLD && !pendingClose) {
+    // started a close
+    pendingClose = true;
+    lastCloseTime = now;
+    // don't register a tap yet; wait for the open
+    return false;
+  }
+
+  if (tapMeanDist >= TAP_OPEN_THRESHOLD && pendingClose) {
+    // completed a close -> open sequence within time -> register a tap
+    if (now - lastCloseTime <= TAP_MAX_INTERVAL) {
+      // make a solid palm point for the effect (use lastPalm if available)
+      const palmPos = lastPalm ? lastPalm : landmarks[9];
+      registerTap(palmPos || { x: 0.5, y: 0.5 });
+      pendingClose = false;
+      return true;
+    } else {
+      pendingClose = false;
+    }
+  }
+
+  return false;
+}
+
+// draw and cleanup active tap effects
+function drawTapEffects() {
+  if (!tapEffects.length) return;
+
+  const now = millis();
+  // draw behind other UI elements or atop as desired
+  push();
+  noStroke();
+  for (let i = tapEffects.length - 1; i >= 0; i--) {
+    const e = tapEffects[i];
+    const age = now - e.t;
+    const life = 600; // ms
+    if (age > life) {
+      tapEffects.splice(i, 1);
+      continue;
+    }
+    const norm = constrain(age / life, 0, 1);
+    const alpha = (1 - norm) * 220;
+    const pulse = 1 + Math.sin((age / 30)) * 0.12;
+    const baseR = Math.min(videoElement.width, videoElement.height) * 0.06;
+    const r = baseR * (0.6 + (1 - norm) * 1.4) * pulse;
+
+    // map normalized palm to video coords
+    const px = e.x * videoElement.width;
+    const py = e.y * videoElement.height;
+
+    // flash / glow
+    fill(255, 200, 40, alpha * 0.12);
+    rect(0, 0, width, height);
+
+    // outer glow
+    fill(255, 140, 30, alpha * 0.25);
+    ellipse(px, py, r * 2.6, r * 2.6);
+
+    // main circle
+    fill(255, 220, 80, alpha);
+    ellipse(px, py, r, r);
+  }
+  pop();
+}
+
+// ...existing code...
 function isFist(landmarks) {
   if (!landmarks) return false;
   const tip12 = landmarks[12];
@@ -158,6 +285,9 @@ function draw() {
       // draw all landmarks
       drawLandmarks(hand);
 
+      // process tap detection for this hand (close -> open)
+      processTap(hand);
+
       // check fist for this hand
       if (isFist(hand)) {
         anyFist = true;
@@ -177,6 +307,9 @@ function draw() {
     if (fistActive) {
       drawEffect();
     }
+
+    // draw any active tap effects (visuals for taps)
+    drawTapEffects();
 
   } // end of if detections
   
