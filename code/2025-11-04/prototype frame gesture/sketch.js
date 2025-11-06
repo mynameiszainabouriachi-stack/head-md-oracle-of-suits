@@ -16,9 +16,17 @@ let currentGaugeImage = null;
 let prevFinalMatch = false;
 const GAUGE_STEPS = [1.0, 0.75, 0.5, 0.25, 0.0];
 
+let sound1;
+let soundStarted = false; // <-- added flag
+
 // simple percent config (0..1)
 const IMAGE_SCALE_PCT = 0.8;
 const IMAGE_CENTER_PCT = { x: -2.9, y: -1.7 }; // center of canvas
+
+
+
+
+
 
 // preload images for gauge states
 function preload() {
@@ -28,7 +36,24 @@ function preload() {
   gaugeImages['50'] = loadImage('images/50.png');
   gaugeImages['75'] = loadImage('images/75.png');
   gaugeImages['100'] = loadImage('images/100.png');
+  sound1 = loadSound('sound/sound_6_nov_bg.wav',
+    () => { console.log('sound loaded'); },
+    (err) => { console.error('sound load error:', err); }
+  );
 }
+function mousePressed() {
+  setTimeout(() => {
+    // Start muted autoplay (allowed in Chrome)
+    sound1.setVolume(0);
+    sound1.loop(); // or .play()
+    console.log('Autoplay started (muted)');
+
+    // Fade in over 3 seconds
+    sound1.amp(1, 3);
+  }, 1000);
+}
+
+
 
 // helper to update currentGaugeImage based on GAUGE_PCT
 function updateImageForGauge() {
@@ -62,12 +87,25 @@ function setGaugePct(pct) {
 
 function setup() {
   // full window canvas
-  createCanvas(windowWidth, windowHeight);
+  const cnv = createCanvas(windowWidth, windowHeight);
+  // ensure the canvas sits above DOM elements (video / GIF) so landmarks drawn on the canvas are visible on top
+  cnv.style('position', 'relative');
+  cnv.style('z-index', '999');
 
   // initialize MediaPipe settings
   setupHands();
   // start camera using MediaPipeHands.js helper
   setupVideo();
+
+  // hide the underlying DOM video element (MediaPipe capture) if present
+  // we draw the video into the canvas, so hide the DOM video to avoid it overlaying landmarks
+  if (typeof videoElement !== 'undefined' && videoElement) {
+    if (typeof videoElement.hide === 'function') {
+      videoElement.hide();
+    } else if (videoElement.style) {
+      videoElement.style.display = 'none';
+    }
+  }
 
   // ensure initial image corresponds to full gauge
   updateImageForGauge();
@@ -80,7 +118,7 @@ function windowResized() {
 function draw() {
   // clear the canvas
   background('#90D5FF');
-
+// sound1.play();
   // if the video connection is ready
   if (isVideoReady()) {
     const IMG_SCALE = IMAGE_SCALE_PCT;
@@ -109,9 +147,28 @@ function draw() {
 
     const imgX = IMAGE_X - IMAGE_W * 0.5;
     const imgY = IMAGE_Y - IMAGE_H * 0.5;
+
+    // --- added: ensure video + gauge + GIF fit in window by computing a single vertical offset (yOffset) ---
+    // do not change any existing positions — compute using temporary vars to avoid name collisions
+    const gifGapLocal = 8;
+    const gifOriginalW = 1474;
+    const gifOriginalH = 1292;
+    const gaugeW_calc = IMAGE_W || Math.max(100, width * 0.3);
+    const gaugeH_calc = Math.max(GAUGE_MIN_H, Math.min(GAUGE_MAX_H, (IMAGE_H || 120) * 0.05));
+    const gifDisplayW_calc = Math.min(gaugeW_calc, windowWidth - 16);
+    const gifDisplayH_calc = (gifDisplayW_calc * gifOriginalH) / gifOriginalW;
+
+    // total stacked height: video + gauge + gap + GIF + gap
+    const totalStackedHeight = IMAGE_H + gaugeH_calc + gifGapLocal + gifDisplayH_calc + gifGapLocal;
+
+    // compute single vertical offset to move all three elements upward when overflowing
+    const yOffset = Math.max(0, totalStackedHeight - windowHeight);
+    // --- end added block ---
+
     // draw centered using percent, no extra offset
     // always draw the live video in the main frame (do NOT use gauge images here)
-    drawRoundedImage(videoElement, imgX, imgY, IMAGE_W, IMAGE_H, 24);
+    // apply the computed vertical offset so video/gauge/GIF move together when needed
+    drawRoundedImage(videoElement, imgX, imgY - 100 + 180 - yOffset, IMAGE_W, IMAGE_H, 24);
 
     // draw the gauge-related image to the right of the video, preserving aspect ratio (no deformation)
     if (currentGaugeImage) {
@@ -205,6 +262,22 @@ function draw() {
     }
   }
 
+  // --- added: start background sound once when any hand is detected ---
+  if (!soundStarted && detections && detections.multiHandLandmarks && detections.multiHandLandmarks.length) {
+    const startIfPossible = () => {
+      if (sound1 && typeof sound1.loop === 'function') {
+        try { sound1.loop(); } catch (e) { /* ignore */ }
+      }
+    };
+    if (typeof userStartAudio === 'function') {
+      userStartAudio().then(startIfPossible).catch(startIfPossible);
+    } else {
+      startIfPossible();
+    }
+    soundStarted = true;
+  }
+  // --- end added block ---
+  
   // detect touches between hands (for final match)
   const diag = Math.hypot(IMAGE_W || width, IMAGE_H || height);
   const touchTol = Math.max(20, diag * 0.03);
@@ -294,6 +367,51 @@ function draw() {
   fill(GAUGE_COLOR[0], GAUGE_COLOR[1], GAUGE_COLOR[2]);
   rect(gaugeX, gaugeY, gaugeW * GAUGE_PCT, gaugeH);
   // ---------------------------
+
+  // --- added: show animated GIF directly below the gauge ---
+  // GIF file: image/animation geste.gif
+  if (typeof gestureGif === 'undefined') {
+    // declare global holder if not declared elsewhere
+    window.gestureGif = null;
+  }
+
+  if (!window.gestureGif) {
+    // create the GIF element (will animate as an HTML <img>)
+    // keep it non-interactive and styled nicely
+    window.gestureGif = createImg('images/animation geste.gif');
+    window.gestureGif.attribute('draggable', 'false');
+    window.gestureGif.style('pointer-events', 'none');
+    // give a small corner radius via inline style
+    window.gestureGif.elt.style.borderRadius = '8px';
+    // position absolutely and keep it under the canvas (canvas z-index is higher)
+    window.gestureGif.style('position', 'absolute');
+    window.gestureGif.style('z-index', '1000');
+  }
+
+  // position and size the GIF directly below the gauge, matching gauge width
+  // add a small gap of 8px
+  const gifGap = 8;
+  const gifX = Math.max(0, gaugeX);
+  const gifY = gaugeY + gaugeH + gifGap;
+
+  // choose GIF display size based on original proportions
+  const originalW = 1474;
+  const originalH = 1292;
+
+  // largeur maximale autorisée (par exemple largeur de la fenêtre)
+  const maxWidth = windowWidth - 16; // petit padding de 8px de chaque côté
+
+  // on prend la largeur du gauge mais on limite à maxWidth
+  let gifDisplayW = Math.min(gaugeW, maxWidth);
+
+  // calcule la hauteur pour garder les proportions
+  let gifDisplayH = (gifDisplayW * originalH) / originalW;
+
+  // applique position et taille
+  window.gestureGif.position(gifX, gifY-5);
+  window.gestureGif.size(gifDisplayW*0.6, gifDisplayH*0.6);
+
+  // --- end added block ---
 
 } // end draw
 
