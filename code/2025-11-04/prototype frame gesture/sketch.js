@@ -10,9 +10,55 @@ const GAUGE_MIN_H = 8;
 const GAUGE_MAX_H = 28;
 const GAUGE_COLOR = [255, 140, 0];
 
+// --- added globals for images and gesture-edge detection ---
+let gaugeImages = {};
+let currentGaugeImage = null;
+let prevFinalMatch = false;
+const GAUGE_STEPS = [1.0, 0.75, 0.5, 0.25, 0.0];
+
 // simple percent config (0..1)
 const IMAGE_SCALE_PCT = 0.8;
-const IMAGE_CENTER_PCT = { x: 2.7, y: 1.5 }; // center of canvas
+const IMAGE_CENTER_PCT = { x: -2.9, y: -1.7 }; // center of canvas
+
+// preload images for gauge states
+function preload() {
+  // load images from images/ as requested
+  gaugeImages['0'] = loadImage('images/0 neutre.png');
+  gaugeImages['25'] = loadImage('images/25.png');
+  gaugeImages['50'] = loadImage('images/50.png');
+  gaugeImages['75'] = loadImage('images/75.png');
+  gaugeImages['100'] = loadImage('images/100.png');
+}
+
+// helper to update currentGaugeImage based on GAUGE_PCT
+function updateImageForGauge() {
+  // map GAUGE_PCT to exact labels
+  if (Math.abs(GAUGE_PCT - 1.0) < 0.001) {
+    currentGaugeImage = gaugeImages['100'];
+  } else if (Math.abs(GAUGE_PCT - 0.75) < 0.001) {
+    currentGaugeImage = gaugeImages['75'];
+  } else if (Math.abs(GAUGE_PCT - 0.5) < 0.001) {
+    currentGaugeImage = gaugeImages['50'];
+  } else if (Math.abs(GAUGE_PCT - 0.25) < 0.001) {
+    currentGaugeImage = gaugeImages['25'];
+  } else if (Math.abs(GAUGE_PCT - 0.0) < 0.001) {
+    currentGaugeImage = gaugeImages['0'];
+  } else {
+    // fallback: choose nearest step
+    let nearest = GAUGE_STEPS.reduce((best, val) => Math.abs(val - GAUGE_PCT) < Math.abs(best - GAUGE_PCT) ? val : best, GAUGE_STEPS[0]);
+    if (nearest === 1.0) currentGaugeImage = gaugeImages['100'];
+    else if (nearest === 0.75) currentGaugeImage = gaugeImages['75'];
+    else if (nearest === 0.5) currentGaugeImage = gaugeImages['50'];
+    else if (nearest === 0.25) currentGaugeImage = gaugeImages['25'];
+    else currentGaugeImage = gaugeImages['0'];
+  }
+}
+
+// helper to set gauge and update image
+function setGaugePct(pct) {
+  GAUGE_PCT = pct;
+  updateImageForGauge();
+}
 
 function setup() {
   // full window canvas
@@ -22,6 +68,9 @@ function setup() {
   setupHands();
   // start camera using MediaPipeHands.js helper
   setupVideo();
+
+  // ensure initial image corresponds to full gauge
+  updateImageForGauge();
 }
 
 function windowResized() {
@@ -61,7 +110,41 @@ function draw() {
     const imgX = IMAGE_X - IMAGE_W * 0.5;
     const imgY = IMAGE_Y - IMAGE_H * 0.5;
     // draw centered using percent, no extra offset
+    // always draw the live video in the main frame (do NOT use gauge images here)
     drawRoundedImage(videoElement, imgX, imgY, IMAGE_W, IMAGE_H, 24);
+
+    // draw the gauge-related image to the right of the video, preserving aspect ratio (no deformation)
+    if (currentGaugeImage) {
+      // desired image width roughly equal to the window height (increased)
+      const desiredW = windowHeight * 1.2;
+      const imgAspect = (currentGaugeImage.width && currentGaugeImage.height) ? (currentGaugeImage.width / currentGaugeImage.height) : 1;
+
+      // compute display size preserving aspect ratio
+      let displayW = desiredW;
+      let displayH = displayW / imgAspect;
+
+      // ensure it fits vertically within the window
+      const maxDisplayH = windowHeight * 0.95;
+      if (displayH > maxDisplayH) {
+        displayH = maxDisplayH;
+        displayW = displayH * imgAspect;
+      }
+
+      // position slightly closer to the right side of the video output
+      const smallOffset = Math.min(40, width * 0.03); // small gap from video
+      let gaugeTopLeftX = imgX + IMAGE_W + smallOffset;
+
+      // clamp to stay within canvas with a right margin
+      const marginRight = Math.min(80, width * 0.06);
+      if (gaugeTopLeftX + displayW > width - marginRight) {
+        gaugeTopLeftX = width - marginRight - displayW;
+      }
+
+      // vertically center relative to the main video image
+      const gaugeTopLeftY = IMAGE_Y - displayH * 0.5;
+
+      drawRoundedImage(currentGaugeImage, gaugeTopLeftX-170, gaugeTopLeftY-200, displayW*2, displayH*2, 12);
+    }
   }
 
   // keep strokeWeight for any future drawing
@@ -174,11 +257,27 @@ function draw() {
   }
 
   // ---------------------------
-  // Gauge: orange, decreases progressively,
+  // Gauge: orange, decreases stepwise only when finalMatch true,
   // aligned with the bottom edge of the image, nothing else changed.
   // ---------------------------
-  // update gauge percentage based on deltaTime (p5 provided, ms)
-  GAUGE_PCT = Math.max(0, GAUGE_PCT - (deltaTime || 16) * (1 / GAUGE_EMPTY_MS));
+  // NOTE: removed automatic time-based decrease. Gauge only changes on gesture edges.
+
+  // on rising edge of finalMatch, step gauge down one step
+  if (finalMatch && !prevFinalMatch) {
+    // find current step index
+    let idx = GAUGE_STEPS.findIndex(s => Math.abs(s - GAUGE_PCT) < 0.001);
+    if (idx === -1) {
+      // fallback: nearest
+      idx = GAUGE_STEPS.reduce((bestIdx, val, i) => {
+        return (Math.abs(val - GAUGE_PCT) < Math.abs(GAUGE_STEPS[bestIdx] - GAUGE_PCT)) ? i : bestIdx;
+      }, 0);
+    }
+    if (idx < GAUGE_STEPS.length - 1) {
+      setGaugePct(GAUGE_STEPS[idx + 1]);
+    }
+  }
+  // remember previous finalMatch state for edge detection
+  prevFinalMatch = finalMatch;
 
   // compute gauge geometry aligned with image bottom
   const gaugeW = IMAGE_W || Math.max(100, width * 0.3);
