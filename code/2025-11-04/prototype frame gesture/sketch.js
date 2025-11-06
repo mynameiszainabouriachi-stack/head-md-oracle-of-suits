@@ -413,6 +413,8 @@ function draw() {
 
   // --- end added block ---
 
+  
+
 } // end draw
 
 // helper: convert a normalized landmark {x,y} (0..1) to canvas coordinates
