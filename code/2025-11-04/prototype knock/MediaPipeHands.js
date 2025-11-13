@@ -82,9 +82,22 @@ function setupHands() {
 }
 
 // store the results of the hand detection
+// Store the results of the hand detection
 function onHandsResults(results) {
   detections = results;
+
+  // Tell the main sketch if a hand is visible
+  const hasHands = detections &&
+                   detections.multiHandLandmarks &&
+                   detections.multiHandLandmarks.length > 0;
+
+  if (typeof setHandPresent === "function") {
+    setHandPresent(hasHands);
+  }
 }
+
+
+
 
 
 // move the videoElement && videoElement.loadedmetadata checks to here

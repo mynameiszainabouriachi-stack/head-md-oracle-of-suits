@@ -28,6 +28,16 @@ function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
 
+function videoWidthPx() {
+  if (!videoElement) return width;
+  return videoElement.videoWidth || videoElement.width || videoElement.clientWidth || width;
+}
+
+function videoHeightPx() {
+  if (!videoElement) return height;
+  return videoElement.videoHeight || videoElement.height || videoElement.clientHeight || height;
+}
+
 
 // new globals for fist detection / effect (updated to use palm center 9)
 let fistActive = false;
@@ -154,12 +164,12 @@ function drawTapEffects() {
     const norm = constrain(age / life, 0, 1);
     const alpha = (1 - norm) * 220;
     const pulse = 1 + Math.sin((age / 30)) * 0.12;
-    const baseR = Math.min(videoElement.width, videoElement.height) * 0.06;
+  const baseR = Math.min(videoWidthPx(), videoHeightPx()) * 0.06;
     const r = baseR * (0.6 + (1 - norm) * 1.4) * pulse;
 
     // map normalized palm to video coords
-    const px = e.x * videoElement.width;
-    const py = e.y * videoElement.height;
+  const px = e.x * videoWidthPx();
+  const py = e.y * videoHeightPx();
 
     // flash / glow
     fill(255, 200, 40, alpha * 0.12);
@@ -239,11 +249,11 @@ function drawEffect() {
   pop();
 
   // convert normalized tip coords to video pixels (consistent with the rest of the code)
-  const px = lastPalm.x * videoElement.width;
-  const py = lastPalm.y * videoElement.height;
+  const px = lastPalm.x * videoWidthPx();
+  const py = lastPalm.y * videoHeightPx();
 
   // pulsing radius
-  const baseR = Math.min(videoElement.width, videoElement.height) * 0.06;
+  const baseR = Math.min(videoWidthPx(), videoHeightPx()) * 0.06;
   const pulse = 1 + Math.sin(frameCount * 0.15) * 0.12;
   const r = baseR * (1 + intensity * 0.6) * pulse;
 
@@ -274,7 +284,7 @@ function draw() {
   // if the video connection is ready
   if (isVideoReady()) {
     // draw the capture image
-    image(videoElement, 0, 0);
+    image(videoElement, 0, 0, width, height);
   }
 
   // use thicker lines for drawing hand connections
@@ -341,8 +351,8 @@ function drawIndex(landmarks) {
   fill(0, 255, 255);
 
   // adapt the coordinates (0..1) to video coordinates
-  let x = mark.x * videoElement.width;
-  let y = mark.y * videoElement.height;
+  let x = mark.x * videoWidthPx();
+  let y = mark.y * videoHeightPx();
   circle(x, y, 20);
 
 }
@@ -359,8 +369,8 @@ function drawThumb(landmarks) {
   fill(255, 255, 0);
 
   // adapt the coordinates (0..1) to video coordinates
-  let x = mark.x * videoElement.width;
-  let y = mark.y * videoElement.height;
+  let x = mark.x * videoWidthPx();
+  let y = mark.y * videoHeightPx();
   circle(x, y, 20);
 
 }
@@ -377,8 +387,8 @@ function drawTips(landmarks) {
   for (let tipIndex of tips) {
     let mark = landmarks[tipIndex];
     // adapt the coordinates (0..1) to video coordinates
-    let x = mark.x * videoElement.width;
-    let y = mark.y * videoElement.height;
+  let x = mark.x * videoWidthPx();
+  let y = mark.y * videoHeightPx();
     circle(x, y, 10);
   }
 
@@ -393,8 +403,8 @@ function drawLandmarks(landmarks) {
 
   for (let mark of landmarks) {
     // adapt the coordinates (0..1) to video coordinates
-    let x = mark.x * videoElement.width;
-    let y = mark.y * videoElement.height;
+  let x = mark.x * videoWidthPx();
+  let y = mark.y * videoHeightPx();
     circle(x, y, 6);
   }
 
@@ -414,10 +424,10 @@ function drawConnections(landmarks) {
     // skip if either landmark is missing
     if (!a || !b) continue;
     // landmarks are normalized [0..1], (x,y) with origin top-left
-    let ax = a.x * videoElement.width;
-    let ay = a.y * videoElement.height;
-    let bx = b.x * videoElement.width;
-    let by = b.y * videoElement.height;
+  let ax = a.x * videoWidthPx();
+  let ay = a.y * videoHeightPx();
+  let bx = b.x * videoWidthPx();
+  let by = b.y * videoHeightPx();
     line(ax, ay, bx, by);
   }
 
