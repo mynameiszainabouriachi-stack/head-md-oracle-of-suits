@@ -5,7 +5,7 @@
 // ---- Knock thresholds ----
 // we track a single knuckle moving quickly toward the camera
 const KNOCK_POINT_INDEX = 9;      // middle finger base (or any stable knuckle)
-const KNOCK_DELTA_THRESHOLD = -0.015; // Z change to count as "forward"
+const KNOCK_DELTA_THRESHOLD = 0.015;  // minimum forward depth change toward camera
 const KNOCK_MAX_DT_MS = 260;          // must happen fast
 const KNOCK_COOLDOWN_MS = 600;
 
@@ -121,15 +121,14 @@ function detectKnock(landmarks) {
     return;
   }
 
-  const deltaZ = z - knockState.lastDepth;          // how much it moved in depth
-  const isForward = deltaZ <= KNOCK_DELTA_THRESHOLD;
+  const forwardDelta = knockState.lastDepth - z;    // positive when moving toward camera
+  const isForward = forwardDelta >= KNOCK_DELTA_THRESHOLD;
   const isFast = dt <= KNOCK_MAX_DT_MS;
 
-  // debug every time we have a noticeable forward motion
-  if (deltaZ < -0.005) {
-    console.log("🌀 fist motion", {
+  if (forwardDelta > 0.003) {
+    console.log("👊 knock candidate", {
       z: z.toFixed(3),
-      deltaZ: deltaZ.toFixed(3),
+      forwardDelta: forwardDelta.toFixed(3),
       dt: Math.round(dt),
       isForward,
       isFast
@@ -140,14 +139,13 @@ function detectKnock(landmarks) {
     knockState.cooldownUntil = now + KNOCK_COOLDOWN_MS;
 
     if (typeof onKnockDetected === "function") {
+      console.log("✅ KNOCK TRIGGERED", {
+        z: z.toFixed(3),
+        forwardDelta: forwardDelta.toFixed(3),
+        dt: Math.round(dt)
+      });
       onKnockDetected();
     }
-
-    console.log("✅ KNOCK DETECTED (fist)", {
-      z: z.toFixed(3),
-      deltaZ: deltaZ.toFixed(3),
-      dt: Math.round(dt)
-    });
   }
 
   knockState.lastDepth = z;
