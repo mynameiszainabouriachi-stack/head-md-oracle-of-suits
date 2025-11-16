@@ -1,19 +1,15 @@
 // =====================================================
-// MediaPipe Hands — stable version for Sleeping Card
+// MediaPipe Hands — Version stable pour Sleeping Card
 // =====================================================
 
 // ---- Knock thresholds ----
-// we track a single knuckle moving quickly toward the camera
-const KNOCK_POINT_INDEX = 9;      // middle finger base (or any stable knuckle)
-const KNOCK_DELTA_THRESHOLD = 0.001;  // relaxed for testing
-const KNOCK_MAX_DT_MS = 260;
-const KNOCK_COOLDOWN_MS = 0; // disable cooldown for testing
-
+const KNOCK_POINT_INDEX = 9;          // middle finger base
+const KNOCK_DELTA_THRESHOLD = 0.003;  // detect forward movement
+const KNOCK_MAX_DT_MS = 120;          // must be fast
+const KNOCK_COOLDOWN_MS = 400;        // cooldown to avoid spam
 
 // ---- Globals ----
 let videoElement = null;
-let handsLoopHandle = null;
-let isSendingFrame = false;
 let detections = null;
 
 const knockState = {
@@ -23,10 +19,9 @@ const knockState = {
 };
 
 let lastHandPresent = false;
-let lastTrackingLog = 0;
 
 // ----------------------------------------------------
-// 1) Create / reuse hidden <video>
+// Create hidden <video> that MediaPipe uses
 // ----------------------------------------------------
 function ensureVideo() {
   if (!videoElement) {
@@ -37,14 +32,13 @@ function ensureVideo() {
     videoElement.muted = true;
     videoElement.style.display = "none";
     document.body.appendChild(videoElement);
-    console.log("created hidden video element");
   }
   window.videoElement = videoElement;
   return videoElement;
 }
 
 // ----------------------------------------------------
-// 2) Init MediaPipe Hands
+// Initialize MediaPipe Hands
 // ----------------------------------------------------
 const hands = new Hands({
   locateFile: (file) => 
@@ -62,7 +56,7 @@ hands.setOptions({
 hands.onResults(onHandsResults);
 
 // ----------------------------------------------------
-// 3) Results callback → hand presence + knock
+// Hands callback: detect hand + detect knock
 // ----------------------------------------------------
 function onHandsResults(results) {
   detections = results;
@@ -82,14 +76,6 @@ function onHandsResults(results) {
   }
 
   if (hasHands) {
-    const now = performance.now();
-    if (now - lastTrackingLog > 1000) {
-      const points = results.multiHandLandmarks[0]
-        ? results.multiHandLandmarks[0].length
-        : 0;
-      console.log("tracking landmarks ok", { points });
-      lastTrackingLog = now;
-    }
     detectKnock(results.multiHandLandmarks);
   } else {
     resetKnock();
@@ -97,14 +83,13 @@ function onHandsResults(results) {
 }
 
 // ----------------------------------------------------
-// 4) Knock gesture detection
+// Knock detection: track one knuckle moving forward
 // ----------------------------------------------------
 function detectKnock(landmarks) {
   const now = performance.now();
   const hand = landmarks[0];
   if (!hand || !hand[KNOCK_POINT_INDEX]) return;
 
-  // we follow ONE point (a knuckle) instead of averaging all points
   const pt = hand[KNOCK_POINT_INDEX];
   const z = pt.z || 0;
 
@@ -114,34 +99,27 @@ function detectKnock(landmarks) {
     return;
   }
 
-  const dt = now - knockState.lastTimestamp; // ms
+  const dt = now - knockState.lastTimestamp;
   if (dt <= 0) {
     knockState.lastDepth = z;
     knockState.lastTimestamp = now;
     return;
   }
 
-  const forwardDelta = knockState.lastDepth - z;    // positive when moving toward camera
-  const isForward = forwardDelta >= KNOCK_DELTA_THRESHOLD;
+  const forwardDelta = knockState.lastDepth - z; // positive = moving closer
+  const isForward = forwardDelta > KNOCK_DELTA_THRESHOLD;
   const isFast = dt <= KNOCK_MAX_DT_MS;
 
-  if (forwardDelta > 0.001) {
-    console.log("👊 knock candidate", {
+  if (isForward && isFast && now >= knockState.cooldownUntil) {
+    knockState.cooldownUntil = now + KNOCK_COOLDOWN_MS;
+
+    console.log("KNOCK!", {
       z: z.toFixed(3),
       forwardDelta: forwardDelta.toFixed(3),
       dt: Math.round(dt),
-      isForward,
-      isFast
     });
-  }
 
-  if (isForward && isFast) {
     if (typeof onKnockDetected === "function") {
-      console.log("KNOCK!", {
-        z: z.toFixed(3),
-        forwardDelta: forwardDelta.toFixed(3),
-        dt: Math.round(dt)
-      });
       onKnockDetected();
     }
   }
@@ -150,7 +128,6 @@ function detectKnock(landmarks) {
   knockState.lastTimestamp = now;
 }
 
-
 function resetKnock() {
   knockState.lastDepth = null;
   knockState.lastTimestamp = 0;
@@ -158,7 +135,7 @@ function resetKnock() {
 }
 
 // ----------------------------------------------------
-// 5) Camera + Frame Loop
+// Camera starter
 // ----------------------------------------------------
 async function startCamera() {
   const vid = ensureVideo();
@@ -182,38 +159,29 @@ async function startCamera() {
 function startHandsLoop() {
   if (!videoElement) return;
 
-  if (handsLoopHandle) {
-    cancelAnimationFrame(handsLoopHandle);
-    handsLoopHandle = null;
-  }
-
   const loop = async () => {
     const vid = videoElement;
     if (
       vid &&
       vid.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
       vid.videoWidth > 0 &&
-      vid.videoHeight > 0 &&
-      !isSendingFrame
+      vid.videoHeight > 0
     ) {
-      isSendingFrame = true;
       try {
         await hands.send({ image: vid });
       } catch (err) {
         console.error("hands.send failed", err);
-      } finally {
-        isSendingFrame = false;
       }
     }
 
-    handsLoopHandle = requestAnimationFrame(loop);
+    requestAnimationFrame(loop);
   };
 
   loop();
 }
 
 // ----------------------------------------------------
-// 6) p5 can check if video is ready
+// p5 can check if the video is ready
 // ----------------------------------------------------
 function isVideoReady() {
   const vid = window.videoElement;
@@ -223,66 +191,11 @@ function isVideoReady() {
 
 window.isVideoReady = isVideoReady;
 
-// ----------------------------------------------------
-// 7) Auto-start
-// ----------------------------------------------------
+// auto-start camera
 document.addEventListener("DOMContentLoaded", () => {
   startCamera();
 });
 
-// Optional debug
+// Debug access
 window.hands = hands;
 window.getHandsDetections = () => detections;
-
-// main.js — replace drawRightColumn() with this version.
-function drawRightColumn() {
-  const colW = DESIGN_W * 0.44;
-  const colH = DESIGN_H * 0.68;
-  const cornerR = 40;
-
-  noStroke();
-  fill(0, 40, 80, 190);
-  rectMode(CENTER);
-  rect(0, 0, colW, colH, cornerR);
-
-  if (messageImg && messageImg.width && messageImg.height) {
-    imageMode(CENTER);
-    const maxW = colW * 0.96;
-    const maxH = colH * 0.45;
-    let msgW = maxW;
-    let msgH = msgW * (messageImg.height / messageImg.width);
-    if (msgH > maxH) {
-      msgH = maxH;
-      msgW = msgH * (messageImg.width / messageImg.height);
-    }
-    image(messageImg, 0, -colH * 0.33, msgW, msgH);
-  }
-
-  const vid = getReadyVideo();
-  const areaH = colH * 0.58;
-  const areaW = colW * 0.94;
-  const videoCenterY = -colH * 0.01;
-
-  if (vid) {
-    const ratio = vid.videoWidth / vid.videoHeight;
-
-    let w = areaW;
-    let h = w / ratio;
-    if (h > areaH) {
-      h = areaH;
-      w = h * ratio;
-    }
-    push();
-    translate(0, videoCenterY);
-    drawingContext.save();
-    drawingContext.drawImage(vid, -w / 2, -h / 2, w, h);
-    drawingContext.restore();
-    pop();
-  } else {
-    fill(0, 30, 60, 150);
-    rect(0, videoCenterY, areaW, areaH, 30);
-  }
-
-  const gaugeY = videoCenterY + areaH / 2 + colH * 0.08;
-  drawGauge(0, gaugeY, 255);
-}
